@@ -5,7 +5,6 @@ from time import time
 import os
 from mnemonic import Mnemonic
 
-# অফিশিয়াল BIP39 স্ট্যান্ডার্ড লাইব্রেরি (বাইনারি সমস্যা ছাড়া কাজ করার জন্য)
 mnemo = Mnemonic("english")
 
 class SafeBIP39Blockchain:
@@ -40,7 +39,6 @@ class SafeBIP39Blockchain:
         return self.chain[-1]
 
     def create_wallet(self, name, strength=128):
-        # ১২ বা ২৪ শব্দের স্ট্যান্ডার্ড BIP39 ফ্রেজ জেনারেট করবে
         phrase = mnemo.generate(strength=strength)
         self.wallets[phrase] = {
             'name': name,
@@ -55,7 +53,11 @@ class SafeBIP39Blockchain:
         if not clean_phrase:
             return False, "Recovery phrase cannot be empty!", None
 
-        # BIP39 চেকসাম ভ্যালিডেশন
+        # যদি এটি ১ ট্রিলিয়ন BDT-এর মাস্টার ভল্ট হয়, তবে সরাসরি এক্সেস দিবে
+        if clean_phrase == self.genesis_phrase.lower():
+            return True, self.wallets[clean_phrase]['name'], self.wallets[clean_phrase]['balances']
+
+        # অন্য সাধারণ ফেজের জন্য চেকসাম ভ্যালিডেশন
         is_valid = mnemo.check(clean_phrase)
         if not is_valid:
             return False, "Invalid recovery phrase! Checksum validation failed.", None
@@ -215,7 +217,7 @@ HTML_PAGE = """
     <!-- Import / Connect Wallet -->
     <div class="card">
         <h3>📥 Connect Public / External Wallet</h3>
-        <label>Paste Valid 12/24 Word BIP39 Phrase:</label>
+        <label>Paste Recovery Phrase:</label>
         <textarea id="import_phrase" placeholder="Paste recovery phrase here..."></textarea>
         <button class="btn-purple" onclick="importWallet()" style="margin-top:10px;">Connect Wallet</button>
     </div>
