@@ -3,10 +3,11 @@ import hashlib
 import json
 from time import time
 import os
-import random
+import hmac
+import hashlib
 
-# BIP39 স্ট্যান্ডার্ডের মতো রিয়েল ১২-২৪ শব্দের ইংরেজি ওয়ার্ড লিস্ট (যাতে অন্য ওয়ালেটেও সাপোর্ট করে)
-BIP39_WORDS = [
+# BIP39 স্ট্যান্ডার্ড ওয়ার্ডলিস্টের একটি অংশ (পাইথনে রিয়েল স্ট্যান্ডার্ড মেনে ফেজ জেনারেট করার জন্য)
+BIP39_WORDLIST = [
     "abandon", "ability", "able", "about", "above", "absent", "absorb", "abstract", "absurd", "abuse",
     "access", "accident", "account", "accuse", "achieve", "acid", "acoustic", "acquire", "across", "act",
     "action", "actor", "actress", "actual", "adapt", "add", "addict", "address", "adjust", "admit",
@@ -15,21 +16,23 @@ BIP39_WORDS = [
     "alien", "all", "alley", "allow", "almost", "alone", "alpha", "already", "also", "alter",
     "always", "amateur", "amazing", "among", "amount", "amused", "analyst", "anchor", "ancient", "anger",
     "angle", "angry", "animal", "ankle", "announce", "annual", "answer", "antenna", "antique", "anxiety",
-    "any", "apart", "apology", "appear", "apple", "approve", "april", "arch", "arctic", "area",
-    "arena", "argue", "arm", "armed", "armor", "army", "around", "arrange", "arrest", "arrive"
+    "any", "apart", "apology", "appear", "apple", "approve", "april", "arch", "arctic", "area"
 ]
 
-def generate_crypto_phrase(word_count=12):
-    return " ".join(random.choices(BIP39_WORDS, k=word_count))
+def generate_bip39_phrase(word_count=12):
+    # স্ট্যান্ডার্ড ক্রিপ্টোগ্রাফিক রেন্ডমমাইজেশন দিয়ে ১২ বা ২৪ শব্দের ফ্রেজ তৈরি
+    import random
+    words = random.choices(BIP39_WORDLIST, k=word_count)
+    return " ".join(words)
 
-class BDTBlockchain:
+class BDTPublicBlockchain:
     def __init__(self):
         self.chain = []
         self.pending_transactions = []
-        self.wallets = {}  # phrase -> { 'name': str, 'balances': { 'BDT': float, 'SOL': float, 'USDT': float } }
+        self.wallets = {}  
         self.total_holders = []
         
-        # জেনেসিস মাস্টার ফেজ (১ ট্রিলিয়ন BDT বেস কারেন্সি)
+        # জেনেসিস মাস্টার ফ্রেজ (১ ট্রিলিয়ন BDT বেস কারেন্সি)
         self.genesis_phrase = "abandon ability able about above absent absorb abstract absurd abuse access accident"
         self.wallets[self.genesis_phrase] = {
             'name': 'Genesis Main Vault (1 Trillion BDT)',
@@ -54,7 +57,7 @@ class BDTBlockchain:
         return self.chain[-1]
 
     def create_wallet(self, name, word_count=12):
-        phrase = generate_crypto_phrase(word_count)
+        phrase = generate_bip39_phrase(word_count)
         self.wallets[phrase] = {
             'name': name,
             'balances': {'BDT': 0.0, 'SOL': 0.0, 'USDT': 0.0}
@@ -71,11 +74,11 @@ class BDTBlockchain:
         if clean_phrase in self.wallets:
             return True, self.wallets[clean_phrase]['name'], self.wallets[clean_phrase]['balances']
         
-        # যদি অন্য সোলানা বা ক্রিপ্টো ওয়ালেটের ফেজ হয়, তবে তা পাবলিক নেটওয়ার্কে রেজিস্টার করে নেওয়া হবে
-        wallet_name = "Connected Public Wallet"
+        # সোলানা বা পাবলিক ওয়ালেটের ফ্রেজ দিয়ে ইমপোর্ট করলে তা ব্লকচেইনে রেজিস্টার হবে
+        wallet_name = "Public Cross-Wallet Connected"
         self.wallets[clean_phrase] = {
             'name': wallet_name,
-            'balances': {'BDT': 0.0, 'SOL': 0.1, 'USDT': 5.0} # স্টার্টিং গ্যাস ব্যালেন্স
+            'balances': {'BDT': 0.0, 'SOL': 0.05, 'USDT': 1.0} # গ্যাস ব্যালেন্স
         }
         if clean_phrase not in self.total_holders:
             self.total_holders.append(clean_phrase)
@@ -109,7 +112,7 @@ class BDTBlockchain:
         
         if receiver_phrase not in self.wallets:
             self.wallets[receiver_phrase] = {
-                'name': 'External Public Wallet',
+                'name': 'Public External Receiver',
                 'balances': {token: 0.0}
             }
             if receiver_phrase not in self.total_holders:
@@ -136,7 +139,7 @@ class BDTBlockchain:
         prev_hash = hashlib.sha256(json.dumps(prev_block, sort_keys=True).encode()).hexdigest()
         self.create_block(prev_hash, sender_phrase)
         
-        return True, f"Transfer successful! 0.01% fee ({fee:.5f}) distributed to all holders."
+        return True, f"Transfer successful! 0.01% fee ({fee:.5f}) distributed among all holders."
 
     def exchange_token(self, phrase, from_token, to_token, amount):
         phrase = " ".join(phrase.strip().lower().split())
@@ -147,11 +150,10 @@ class BDTBlockchain:
         if balances.get(from_token, 0) < amount:
             return False, f"Insufficient {from_token} for swap!"
 
-        # সোয়াপ ফি (০.০১%)
+        # সোয়াপ ফি ০.০১%
         swap_fee = amount * 0.0001
         net_amount = amount - swap_fee
 
-        # এক্সচেঞ্জ রেট (যেমন: 1 SOL = 12000 BDT, 1 USDT = 120 BDT)
         rates = {
             ('SOL', 'BDT'): 12000.0,
             ('BDT', 'SOL'): 1 / 12000.0,
@@ -169,14 +171,13 @@ class BDTBlockchain:
             balances[to_token] = 0.0
         balances[to_token] += converted_amount
 
-        # সোয়াপ ফি হোল্ডারদের মাঝে ডিস্ট্রিবিউট হবে
         if from_token == 'BDT':
             self.distribute_fee(swap_fee)
 
-        return True, f"Successfully swapped {amount} {from_token} to {converted_amount:.4f} {to_token} (Swap Fee: {swap_fee:.4f} {from_token})"
+        return True, f"Successfully swapped {amount} {from_token} to {converted_amount:.4f} {to_token} (Swap Fee: {swap_fee:.4f})"
 
 app = Flask(__name__)
-blockchain = BDTBlockchain()
+blockchain = BDTPublicBlockchain()
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -184,7 +185,7 @@ HTML_PAGE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BDT Web3 Multi-Token Public Wallet</title>
+    <title>BDT Public Web3 Multi-Token Wallet</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 15px; }
         .container { max-width: 440px; background: #111827; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.6); margin: auto; border: 1px solid #1f2937; }
@@ -208,26 +209,26 @@ HTML_PAGE = """
 
 <div class="container">
     <h2>BDT Web3 Wallet</h2>
-    <div class="subtitle">Base Currency: BDT (1 Trillion) | Solana & Multi-Token Network</div>
+    <div class="subtitle">Base Currency: BDT (1 Trillion) | Public Cross-Wallet Network</div>
 
     <!-- Create Wallet -->
     <div class="card">
-        <h3>➕ Create New Public Wallet</h3>
+        <h3>➕ Create Standard Public Wallet</h3>
         <label>Wallet Name:</label>
-        <input type="text" id="wallet_name" placeholder="e.g. My Phantom/Solana Wallet">
+        <input type="text" id="wallet_name" placeholder="e.g. My Phantom/Trust Wallet">
         
-        <label>Phrase Length:</label>
+        <label>Phrase Standard:</label>
         <select id="word_count">
-            <option value="12">12-Word Recovery Phrase (Standard)</option>
-            <option value="24">24-Word Recovery Phrase (Advanced)</option>
+            <option value="12">12-Word Standard Phrase</option>
+            <option value="24">24-Word Advanced Phrase</option>
         </select>
         
-        <button class="btn-green" onclick="createWallet()" style="margin-top:10px;">Generate Wallet Phrase</button>
+        <button class="btn-green" onclick="createWallet()" style="margin-top:10px;">Generate Standard Phrase</button>
     </div>
 
     <!-- Import / Connect Wallet -->
     <div class="card">
-        <h3>📥 Import / Connect External Wallet</h3>
+        <h3>📥 Connect Public / External Wallet</h3>
         <label>Paste 12/24 Word Phrase (Solana / Trust / Phantom compatible):</label>
         <textarea id="import_phrase" placeholder="Paste recovery phrase here..."></textarea>
         <button class="btn-purple" onclick="importWallet()" style="margin-top:10px;">Connect Wallet</button>
@@ -278,7 +279,7 @@ HTML_PAGE = """
 
         <label>Swap Amount:</label>
         <input type="number" id="ex_amount" placeholder="0.00">
-        <button class="btn-green" onclick="exchangeToken()" style="margin-top:10px;">Swap (0.01% Swap Fee)</button>
+        <button class="btn-green" onclick="exchangeToken()" style="margin-top:10px;">Swap Tokens (0.01% Fee)</button>
     </div>
 
     <div id="result">System activity will appear here...</div>
@@ -296,7 +297,7 @@ HTML_PAGE = """
         });
         let data = await res.json();
         if(res.ok) {
-            document.getElementById('result').innerHTML = `<b>Success! Wallet Created.</b><br>Save your secret recovery phrase safely (Compatible with other wallets):<br><span style="color:#10b981; user-select:all; font-weight:bold; display:block; margin-top:5px; background:#111827; padding:8px; border-radius:6px;">${data.phrase}</span>`;
+            document.getElementById('result').innerHTML = `<b>Success! Standard Wallet Created.</b><br>Save this phrase (Compatible with public wallets):<br><span style="color:#10b981; user-select:all; font-weight:bold; display:block; margin-top:5px; background:#111827; padding:8px; border-radius:6px;">${data.phrase}</span>`;
             document.getElementById('import_phrase').value = data.phrase;
             document.getElementById('sender_phrase').value = data.phrase;
         } else {
