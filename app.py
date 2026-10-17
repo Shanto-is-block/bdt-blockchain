@@ -6,25 +6,23 @@ import os
 
 app = Flask(__name__)
 
-class DistributedFeeDOTBlockchain:
+class HybridIndependentDOTBlockchain:
     def __init__(self):
         self.chain = []
         self.pending_transactions = []
         self.wallets = {}
         self.total_holders = []
         
-        # মাস্টার ভল্ট ও লিকুইডিটি পুল (১ ট্রিলিয়ন DOT এবং মাইক্রো SOL রিজার্ভ)
+        # মাস্টার ভল্ট ও লিকুইডিটি পুল (১ ট্রিলিয়ন DOT বেস কারেন্সি)
         self.master_address = "DOT_GENESIS_VAULT_1TRILLION"
         self.wallets[self.master_address] = {
             'name': 'DOT Master Liquidity Vault',
             'balances': {
-                'DOT': 1000000000000.0,  # ১ ট্রিলিয়ন DOT বেস কারেন্সি
-                'SOL': 0.0000833         # প্রাথমিক ক্ষুদ্র লিকুইডিটি
+                'DOT': 1000000000000.0,
+                'SOL': 0.0000833
             }
         }
         self.total_holders.append(self.master_address)
-        
-        # জেনেসিস ব্লক তৈরি
         self.create_block(previous_hash="0", proof=100)
 
     def create_block(self, previous_hash, proof):
@@ -48,7 +46,7 @@ class DistributedFeeDOTBlockchain:
 
     def create_wallet(self, address, name):
         if address in self.wallets:
-            return False, "Wallet already exists!"
+            return False, "এই ওয়ালেট অ্যাড্রেসটি আগেই তৈরি করা আছে!"
         
         self.wallets[address] = {
             'name': name,
@@ -56,16 +54,14 @@ class DistributedFeeDOTBlockchain:
         }
         if address not in self.total_holders:
             self.total_holders.append(address)
-        return True, "Wallet registered successfully!"
+        return True, "DOT ব্লকচেইনে সফলভাবে নিজস্ব ওয়ালেট তৈরি হয়েছে!"
 
     def get_amm_price(self):
         pool = self.wallets[self.master_address]['balances']
         dot_reserve = pool['DOT']
         sol_reserve = pool['SOL']
-        
         if sol_reserve <= 0:
             return {'dot_per_sol': 12000.0, 'dot_reserve': dot_reserve, 'sol_reserve': sol_reserve}
-        
         dot_per_sol = dot_reserve / sol_reserve
         return {
             'dot_per_sol': dot_per_sol,
@@ -74,63 +70,50 @@ class DistributedFeeDOTBlockchain:
         }
 
     def cross_chain_deposit_and_swap(self, address, sol_amount):
-        """ সোলানা ডিপোজিট ও AMM সোয়াপ, যেখানে ফি কেটে বাকি অংশ হোল্ডারদের মধ্যে ভাগ করে দেওয়া হয় """
         if address not in self.wallets:
-            self.create_wallet(address, "Phantom User")
+            self.create_wallet(address, "Independent User")
 
         pool = self.wallets[self.master_address]['balances']
         user_bal = self.wallets[address]['balances']
 
-        # কনস্ট্যান্ট প্রোডাক্ট k = x * y
         k = pool['DOT'] * pool['SOL']
-        
-        # মোট ট্রানজেকশন ফি (যেমন ১%)
         total_fee = sol_amount * 0.01
         net_sol = sol_amount - total_fee
 
-        # AMM ফর্মুলা অনুযায়ী DOT আউটপুট হিসাব
         new_sol_reserve = pool['SOL'] + net_sol
         new_dot_reserve = k / new_sol_reserve
         dot_output = pool['DOT'] - new_dot_reserve
 
         if dot_output > pool['DOT']:
-            return False, "Liquidity calculation error!"
+            return False, "লিকুইডিটি ক্যালকুলেশন ত্রুটি!"
 
-        # মাস্টার ভল্ট আপডেট
         pool['SOL'] += net_sol
         pool['DOT'] -= dot_output
-
-        # ইউজার তার মূল পাওনা DOT পেলো
         user_bal['DOT'] = user_bal.get('DOT', 0.0) + dot_output
 
-        # --- ফি ডিস্ট্রিবিউশন লজিক (খরচ বা ফি কেটে সবার মধ্যে ভাগ করে দেওয়া) ---
-        # ফি হিসেবে কাটা SOL বা এর সমপরিমাণ DOT সমস্ত হোল্ডারদের মধ্যে সমানভাবে ভাগ হবে
         fee_in_dot = total_fee * (pool['DOT'] / pool['SOL']) if pool['SOL'] > 0 else total_fee * 12000
-        
         distributed_count = len(self.total_holders)
+        
         if distributed_count > 0:
             share_per_holder = fee_in_dot / distributed_count
             for holder in self.total_holders:
                 if holder in self.wallets:
                     self.wallets[holder]['balances']['DOT'] += share_per_holder
-        else:
-            share_per_holder = 0.0
 
         self.pending_transactions.append({
-            'type': 'FEE_DISTRIBUTED_SWAP',
+            'type': 'CROSS_CHAIN_SWAP',
             'address': address,
             'sol_deposited': sol_amount,
-            'fee_distributed': fee_in_dot,
-            'holders_shared': distributed_count
+            'dot_minted': dot_output
         })
 
         last_block = self.get_last_block()
         last_hash = self.hash_block(last_block)
-        self.create_block(previous_hash=last_hash, proof=777)
+        self.create_block(previous_hash=last_hash, proof=888)
 
-        return True, f"Success! Swapped {sol_amount} SOL. Fee ({fee_in_dot:.2f} DOT equivalent) distributed among {distributed_count} holders."
+        return True, f"সফল! {sol_amount} SOL দিয়ে {dot_output:.4f} DOT কেনা হয়েছে এবং ফি সব হোল্ডারদের মাঝে ভাগ করা হয়েছে।"
 
-blockchain = DistributedFeeDOTBlockchain()
+blockchain = HybridIndependentDOTBlockchain()
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -138,7 +121,7 @@ HTML_PAGE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DOT Blockchain & Fee Redistribution AMM</title>
+    <title>DOT Native Blockchain & Cross-Chain Hub</title>
     <script src="https://unpkg.com/@solana/web3.js@latest/lib/index.iife.min.js"></script>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 15px; }
@@ -151,11 +134,8 @@ HTML_PAGE = """
         button { background: #38bdf8; color: #0b0f19; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         button:hover { background: #0ea5e9; }
         .btn-purple { background: #8b5cf6; color: #fff; }
-        .btn-purple:hover { background: #7c3aed; }
         .btn-green { background: #10b981; color: #fff; }
-        .btn-green:hover { background: #059669; }
         .btn-orange { background: #f59e0b; color: #fff; }
-        .btn-orange:hover { background: #d97706; }
         #result { margin-top: 15px; padding: 12px; background: #111827; border-radius: 8px; word-break: break-all; font-size: 12px; border-left: 4px solid #38bdf8; }
         ul { padding-left: 15px; margin: 5px 0; }
     </style>
@@ -163,58 +143,82 @@ HTML_PAGE = """
 <body>
 
 <div class="container">
-    <h2>DOT Tokenomics</h2>
-    <div class="subtitle">1 Trillion Supply + Fee Reflection & Distribution</div>
+    <h2>DOT Blockchain Hub</h2>
+    <div class="subtitle">1 Trillion Supply + Native & Cross-Chain Wallets</div>
 
-    <!-- Phantom Wallet Connection -->
+    <!-- 1. DOT নিজস্ব ব্লকচেইন ওয়ালেট তৈরি ও লগইন -->
     <div class="card">
-        <h3>🦊 Phantom Wallet (Solana Devnet)</h3>
-        <button class="btn-purple" onclick="connectPhantom()">Connect Phantom Wallet</button>
-        <div id="wallet_status" style="font-size: 11px; color: #9ca3af; margin-top: 8px; word-break: break-all;">Status: Not Connected</div>
+        <h3>👤 DOT নেটিভ ব্লকচেইন ওয়ালেট</h3>
+        <label>আপনার নিজস্ব ওয়ালেট নাম বা আইডি:</label>
+        <input type="text" id="native_wallet_id" placeholder="যেমন: shanto_wallet">
+        <button class="btn-green" onclick="createNativeWallet()" style="margin-top:8px;">নতুন ওয়ালেট খুলুন / লগইন করুন</button>
     </div>
 
-    <!-- Dashboard & Balances -->
+    <!-- 2. এক্সটার্নাল সোলানা ওয়ালেট কানেকশন -->
+    <div class="card">
+        <h3>🦊 এক্সটার্নাল সোলানা ওয়ালেট (Phantom)</h3>
+        <button class="btn-purple" onclick="connectPhantom()">ফ্যান্টম ওয়ালেট কানেক্ট করুন</button>
+        <div id="wallet_status" style="font-size: 11px; color: #9ca3af; margin-top: 8px; word-break: break-all;">স্ট্যাটাস: কানেক্টেড নয়</div>
+    </div>
+
+    <!-- ড্যাশবোর্ড ও ব্যালেন্স -->
     <div class="card" id="dashboard" style="display:none;">
-        <h3 style="color: #38bdf8; margin-top:0;">📊 Account Balances</h3>
+        <h3 style="color: #38bdf8; margin-top:0;">📊 বর্তমান অ্যাকাউন্ট ব্যালেন্স</h3>
         <div id="balance_box"></div>
         
         <hr style="border-color: #1f2937; margin: 15px 0;">
         
-        <h3>🌐 Cross-Chain Deposit & Fee Share</h3>
-        <label>SOL Amount to Deposit (Real Devnet):</label>
+        <h3>🌐 সোলানা দিয়ে DOT এক্সচেঞ্জ (Cross-Chain)</h3>
+        <label>কত SOL ডিপোজিট করতে চান:</label>
         <input type="number" id="sol_deposit_amount" placeholder="0.01" step="0.001">
-        
-        <button class="btn-orange" onclick="executeRealSolDeposit()" style="margin-top:10px;">Deposit SOL & Get DOT (Fee Shared)</button>
+        <button class="btn-orange" onclick="executeCrossChainSwap()" style="margin-top:10px;">SOL পাঠিয়ে DOT নিন (মার্কেট রেট)</button>
     </div>
 
-    <!-- Live Market Rates -->
+    <!-- পুল ইনফো -->
     <div class="card">
-        <h3>📈 AMM Pool & Holders Info</h3>
-        <button onclick="fetchPoolRates()">Check Pool Status</button>
-        <div id="rates_view" style="font-size:11px; margin-top:10px; color:#9ca3af;">Click button to load pool data.</div>
+        <h3>📈 DOT পুল ও মার্কেট রেট</h3>
+        <button onclick="fetchPoolRates()">মার্কেট স্ট্যাটাস দেখুন</button>
+        <div id="rates_view" style="font-size:11px; margin-top:10px; color:#9ca3af;">স্ট্যাটাস দেখতে উপরে ক্লিক করুন।</div>
     </div>
 
-    <div id="result">System ready. Connect Phantom wallet to participate.</div>
+    <div id="result">সিস্টেম প্রস্তুত। ওয়ালেট তৈরি বা কানেক্ট করুন।</div>
 </div>
 
 <script>
     let provider = null;
-    let userPublicKey = null;
-    const SOLANA_NETWORK = "https://api.devnet.solana.com";
+    let activeAddress = null;
 
+    // নিজস্ব DOT ওয়ালেট তৈরি বা লোড করা
+    async function createNativeWallet() {
+        const address = document.getElementById('native_wallet_id').value.trim();
+        if(!address) { alert("দয়া করে ওয়ালেট আইডি দিন!"); return; }
+
+        let res = await fetch('/create_wallet', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({address, name: "Native User"})
+        });
+        let data = await res.json();
+        
+        activeAddress = address;
+        document.getElementById('result').innerHTML = `✅ ${data.message || 'ওয়ালেট লোড হয়েছে!'}`;
+        loadBalances();
+    }
+
+    // ফ্যান্টম ওয়ালেট কানেক্ট করা
     async function connectPhantom() {
         if ("solana" in window) {
             provider = window.solana;
             if (provider.isPhantom) {
                 try {
                     const res = await provider.connect();
-                    userPublicKey = res.publicKey.toString();
-                    document.getElementById('wallet_status').innerHTML = `Connected: <b>${userPublicKey}</b>`;
-                    document.getElementById('result').innerHTML = "✅ Phantom Connected!";
-                    document.getElementById('dashboard').style.display = 'block';
-                    loadDotBalances();
+                    activeAddress = res.publicKey.toString();
+                    document.getElementById('wallet_status').innerHTML = `কানেক্টেড: <b>${activeAddress}</b>`;
+                    document.getElementById('native_wallet_id').value = activeAddress; // অটো ফিল
+                    document.getElementById('result').innerHTML = "✅ ফ্যান্টম ওয়ালেট সফলভাবে যুক্ত হয়েছে!";
+                    loadBalances();
                 } catch (err) {
-                    alert("Connection rejected.");
+                    alert("ওয়ালেট কানেকশন বাতিল করা হয়েছে।");
                 }
             }
         } else {
@@ -222,9 +226,9 @@ HTML_PAGE = """
         }
     }
 
-    async function loadDotBalances() {
-        if(!userPublicKey) return;
-        let res = await fetch(`/wallet/${userPublicKey}`);
+    async function loadBalances() {
+        if(!activeAddress) return;
+        let res = await fetch(`/wallet/${activeAddress}`);
         let data = await res.json();
         
         let html = "<ul>";
@@ -232,52 +236,54 @@ HTML_PAGE = """
             for(let [k, v] of Object.entries(data.balances)) {
                 html += `<li><b>${k}</b>: ${v.toLocaleString(undefined, {maximumFractionDigits: 4})}</li>`;
             }
-        } else {
-            html += "<li><b>DOT</b>: 0</li>";
         }
         html += "</ul>";
         document.getElementById('balance_box').innerHTML = html;
+        document.getElementById('dashboard').style.display = 'block';
     }
 
-    async function executeRealSolDeposit() {
+    async function executeCrossChainSwap() {
         const solAmount = parseFloat(document.getElementById('sol_deposit_amount').value);
-        if(isNaN(solAmount) || solAmount <=0) { alert("Enter valid SOL amount!"); return; }
+        if(!activeAddress) { alert("আগে ওয়ালেট তৈরি বা কানেক্ট করুন!"); return; }
+        if(isNaN(solAmount) || solAmount <= 0) { alert("সঠিক SOL পরিমাণ দিন!"); return; }
 
         try {
-            document.getElementById('result').innerHTML = "⏳ Processing Solana Devnet transaction...";
-            const connection = new solanaWeb3.Connection(SOLANA_NETWORK, 'confirmed');
+            document.getElementById('result').innerHTML = "⏳ সোলানা ডেভনেট ট্রানজেকশন প্রসেসিং হচ্ছে...";
             
-            const transaction = new solanaWeb3.Transaction().add(
-                solanaWeb3.SystemProgram.transfer({
-                    fromPubkey: new solanaWeb3.PublicKey(userPublicKey),
-                    toPubkey: new solanaWeb3.PublicKey(userPublicKey),
-                    lamports: solAmount * solanaWeb3.LAMPORTS_PER_SOL,
-                })
-            );
+            // যদি ফ্যান্টম ওয়ালেট কানেক্ট থাকে, তবে আসল ডেভনেট ট্রানজেকশন ট্রিগার হবে
+            if(provider && provider.isConnected) {
+                const connection = new solanaWeb3.Connection("https://api.devnet.solana.com", 'confirmed');
+                const transaction = new solanaWeb3.Transaction().add(
+                    solanaWeb3.SystemProgram.transfer({
+                        fromPubkey: new solanaWeb3.PublicKey(activeAddress),
+                        toPubkey: new solanaWeb3.PublicKey(activeAddress),
+                        lamports: solAmount * solanaWeb3.LAMPORTS_PER_SOL,
+                    })
+                );
+                const { blockhash } = await connection.getLatestBlockhash();
+                transaction.recentBlockhash = blockhash;
+                transaction.feePayer = new solanaWeb3.PublicKey(activeAddress);
+                await provider.signAndSendTransaction(transaction);
+            }
 
-            const { blockhash } = await connection.getLatestBlockhash();
-            transaction.recentBlockhash = blockhash;
-            transaction.feePayer = new solanaWeb3.PublicKey(userPublicKey);
-
-            const signed = await provider.signAndSendTransaction(transaction);
-            
+            // ব্যাকএন্ডে DOT মিন্ট ও ফি ডিস্ট্রিবিউশন
             let res = await fetch('/cross_chain_swap', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({address: userPublicKey, sol_amount: solAmount})
+                body: JSON.stringify({address: activeAddress, sol_amount: solAmount})
             });
             let data = await res.json();
 
             if(res.ok) {
-                document.getElementById('result').innerHTML = `🎉 ${data.message} | Sig: ${signed.signature.slice(0,10)}...`;
-                loadDotBalances();
+                document.getElementById('result').innerHTML = `🎉 ${data.message}`;
+                loadBalances();
                 fetchPoolRates();
             } else {
                 document.getElementById('result').innerHTML = `❌ ${data.error}`;
             }
 
         } catch (err) {
-            document.getElementById('result').innerHTML = `❌ Transaction Failed: ${err.message}`;
+            document.getElementById('result').innerHTML = `❌ ট্রানজেকশন ফেইল হয়েছে: ${err.message}`;
         }
     }
 
@@ -286,8 +292,8 @@ HTML_PAGE = """
         let data = await res.json();
         let html = `<ul>
             <li>1 SOL = <b>${data.dot_per_sol.toFixed(2)} DOT</b></li>
-            <li>Total Registered Holders: <b>${data.total_holders}</b></li>
-            <li>Pool DOT Reserve: ${data.dot_reserve.toLocaleString(undefined, {maximumFractionDigits: 2})} DOT</li>
+            <li>মোট নিবন্ধিত হোল্ডার: <b>${data.total_holders}</b></li>
+            <li>পুল DOT রিজার্ভ: ${data.dot_reserve.toLocaleString(undefined, {maximumFractionDigits: 2})} DOT</li>
         </ul>`;
         document.getElementById('rates_view').innerHTML = html;
     }
@@ -301,10 +307,16 @@ HTML_PAGE = """
 def home():
     return render_template_string(HTML_PAGE)
 
+@app.route('/create_wallet', methods=['POST'])
+def api_create_wallet():
+    data = request.get_json()
+    success, msg = blockchain.create_wallet(data.get('address'), data.get('name'))
+    return jsonify({'message': msg}), (201 if success else 200)
+
 @app.route('/wallet/<address>', methods=['GET'])
 def api_get_wallet(address):
     if address not in blockchain.wallets:
-        return jsonify({'name': 'User', 'balances': {'DOT': 0.0, 'SOL': 0.0}}), 200
+        blockchain.create_wallet(address, "User")
     w = blockchain.wallets[address]
     return jsonify({'name': w['name'], 'balances': w['balances']}), 200
 
