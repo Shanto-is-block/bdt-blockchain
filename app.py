@@ -5,14 +5,14 @@ from time import time
 import os
 from mnemonic import Mnemonic
 
-# সোলানা ও বিটকয়েনের অফিশিয়াল BIP39 স্ট্যান্ডার্ড ব্যবহার করে রিয়েল ক্রিপ্টোগ্রাফিক ফ্রেজ জেনারেটর
+# অফিশিয়াল BIP39 স্ট্যান্ডার্ড লাইব্রেরি (বাইনারি সমস্যা ছাড়া কাজ করার জন্য)
 mnemo = Mnemonic("english")
 
-class SolanaStandardBlockchain:
+class SafeBIP39Blockchain:
     def __init__(self):
         self.chain = []
         self.pending_transactions = []
-        self.wallets = {}  # phrase -> { 'name': str, 'balances': { 'BDT': float, 'SOL': float, 'USDT': float } }
+        self.wallets = {}  
         self.total_holders = []
         
         # জেনেসিস মাস্টার ফেজ (১ ট্রিলিয়ন BDT বেস কারেন্সি)
@@ -40,7 +40,7 @@ class SolanaStandardBlockchain:
         return self.chain[-1]
 
     def create_wallet(self, name, strength=128):
-        # strength=128 মানে ১২ শব্দ, strength=256 মানে ২৪ শব্দ (অফিশিয়াল BIP39 চেকসাম সহ)
+        # ১২ বা ২৪ শব্দের স্ট্যান্ডার্ড BIP39 ফ্রেজ জেনারেট করবে
         phrase = mnemo.generate(strength=strength)
         self.wallets[phrase] = {
             'name': name,
@@ -55,20 +55,18 @@ class SolanaStandardBlockchain:
         if not clean_phrase:
             return False, "Recovery phrase cannot be empty!", None
 
-        # BIP39 চেকসাম ভ্যালিডেশন (অন্য পাবলিক ওয়ালেটের মতো যাচাই করা)
+        # BIP39 চেকসাম ভ্যালিডেশন
         is_valid = mnemo.check(clean_phrase)
-        
         if not is_valid:
-            return False, "Invalid recovery phrase! Checksum validation failed. (Must be a valid BIP39 12/24 word phrase)", None
+            return False, "Invalid recovery phrase! Checksum validation failed.", None
 
         if clean_phrase in self.wallets:
             return True, self.wallets[clean_phrase]['name'], self.wallets[clean_phrase]['balances']
         
-        # যদি ভ্যালিড ফেজ হয় কিন্তু এই সিস্টেমে নতুন হয়, তবে রেজিস্টার করে নেওয়া হবে
-        wallet_name = "Public Solana-Compatible Wallet"
+        wallet_name = "Public BIP39 Wallet"
         self.wallets[clean_phrase] = {
             'name': wallet_name,
-            'balances': {'BDT': 0.0, 'SOL': 0.01, 'USDT': 5.0} # স্টার্টিং ব্যালেন্স
+            'balances': {'BDT': 0.0, 'SOL': 0.01, 'USDT': 5.0} 
         }
         if clean_phrase not in self.total_holders:
             self.total_holders.append(clean_phrase)
@@ -87,7 +85,7 @@ class SolanaStandardBlockchain:
         receiver_phrase = " ".join(receiver_phrase.strip().lower().split())
 
         if sender_phrase not in self.wallets:
-            return False, "Sender wallet not found in network!"
+            return False, "Sender wallet not found!"
 
         sender_bal = self.wallets[sender_phrase]['balances'].get(token, 0)
         
@@ -96,12 +94,11 @@ class SolanaStandardBlockchain:
         total_deduct = amount + fee
 
         if sender_bal < total_deduct:
-            return False, f"Insufficient {token} balance including 0.01% network fee!"
+            return False, f"Insufficient {token} balance including 0.01% fee!"
 
         self.wallets[sender_phrase]['balances'][token] -= total_deduct
         
         if receiver_phrase not in self.wallets:
-            # যদি রিসিভার একটি ভ্যালিড ফেজ বা এড্রেস হয়
             self.wallets[receiver_phrase] = {
                 'name': 'External Public Recipient',
                 'balances': {token: 0.0}
@@ -114,7 +111,6 @@ class SolanaStandardBlockchain:
             
         self.wallets[receiver_phrase]['balances'][token] += amount
 
-        # ফি ডিস্ট্রিবিউশন
         if fee > 0:
             self.distribute_fee(fee)
 
@@ -130,7 +126,7 @@ class SolanaStandardBlockchain:
         prev_hash = hashlib.sha256(json.dumps(prev_block, sort_keys=True).encode()).hexdigest()
         self.create_block(prev_hash, sender_phrase)
         
-        return True, f"Transfer successful! 0.01% fee ({fee:.5f}) distributed to all active holders."
+        return True, f"Transfer successful! 0.01% fee ({fee:.5f}) distributed to holders."
 
     def exchange_token(self, phrase, from_token, to_token, amount):
         phrase = " ".join(phrase.strip().lower().split())
@@ -139,9 +135,8 @@ class SolanaStandardBlockchain:
         
         balances = self.wallets[phrase]['balances']
         if balances.get(from_token, 0) < amount:
-            return False, f"Insufficient {from_token} for token swap!"
+            return False, f"Insufficient {from_token} for swap!"
 
-        # সোয়াপ ফি ০.০১%
         swap_fee = amount * 0.0001
         net_amount = amount - swap_fee
 
@@ -165,10 +160,10 @@ class SolanaStandardBlockchain:
         if from_token == 'BDT':
             self.distribute_fee(swap_fee)
 
-        return True, f"Successfully swapped {amount} {from_token} to {converted_amount:.4f} {to_token} (Swap Fee: {swap_fee:.4f})"
+        return True, f"Successfully swapped {amount} {from_token} to {converted_amount:.4f} {to_token} (Fee: {swap_fee:.4f})"
 
 app = Flask(__name__)
-blockchain = SolanaStandardBlockchain()
+blockchain = SafeBIP39Blockchain()
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -176,7 +171,7 @@ HTML_PAGE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BDT Web3 Multi-Token Wallet (BIP39 Standard)</title>
+    <title>BDT Web3 Multi-Token Wallet</title>
     <style>
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f19; color: #f1f5f9; margin: 0; padding: 15px; }
         .container { max-width: 440px; background: #111827; padding: 20px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.6); margin: auto; border: 1px solid #1f2937; }
@@ -200,13 +195,13 @@ HTML_PAGE = """
 
 <div class="container">
     <h2>BDT Web3 Wallet</h2>
-    <div class="subtitle">Base Currency: BDT (1 Trillion) | BIP39 Standard & Solana Compatible</div>
+    <div class="subtitle">Base Currency: BDT (1 Trillion) | BIP39 Standard</div>
 
     <!-- Create Wallet -->
     <div class="card">
         <h3>➕ Create BIP39 Standard Wallet</h3>
         <label>Wallet Name:</label>
-        <input type="text" id="wallet_name" placeholder="e.g. My Phantom / Trust Wallet">
+        <input type="text" id="wallet_name" placeholder="e.g. My Wallet">
         
         <label>Phrase Standard:</label>
         <select id="word_count">
@@ -288,7 +283,7 @@ HTML_PAGE = """
         });
         let data = await res.json();
         if(res.ok) {
-            document.getElementById('result').innerHTML = `<b>Success! BIP39 Wallet Created.</b><br>Save this phrase (100% compatible with Phantom/Trust Wallet):<br><span style="color:#10b981; user-select:all; font-weight:bold; display:block; margin-top:5px; background:#111827; padding:8px; border-radius:6px;">${data.phrase}</span>`;
+            document.getElementById('result').innerHTML = `<b>Success! BIP39 Wallet Created.</b><br>Save this phrase:<br><span style="color:#10b981; user-select:all; font-weight:bold; display:block; margin-top:5px; background:#111827; padding:8px; border-radius:6px;">${data.phrase}</span>`;
             document.getElementById('import_phrase').value = data.phrase;
             document.getElementById('sender_phrase').value = data.phrase;
         } else {
