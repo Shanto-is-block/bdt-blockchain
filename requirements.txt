@@ -1,4 +1,2 @@
 flask
 mnemonic
-pynacl
-ed25519
