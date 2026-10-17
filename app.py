@@ -9,17 +9,26 @@ class BDTBlockchain:
     def __init__(self):
         self.chain = []
         self.pending_transactions = []
-        self.users = {}  # ইউজার এবং তাদের পাসফ্রেজ (Passphrase) সংরক্ষণের জন্য
-        # জেনেসিস ব্লক তৈরি
-        self.create_block(previous_hash='1', passcode='0000')
+        self.wallets = {}  # phrase -> { 'name': str, 'balances': { 'BDT': float, 'SOL': float, 'USDT': float } }
+        self.total_holders = []
+        
+        # জেনেসিস ব্লক এবং ১ ট্রিলিয়ন বেস কারেন্সি BDT সাপ্লাই
+        initial_balances = {'BDT': 1000000000000.0, 'SOL': 10.0, 'USDT': 5000.0}
+        genesis_phrase = "bdt-genesis-master-recovery-phrase-2026"
+        self.wallets[genesis_phrase] = {
+            'name': 'Genesis Vault',
+            'balances': initial_balances
+        }
+        self.total_holders.append(genesis_phrase)
+        self.create_block(previous_hash='1', phrase=genesis_phrase)
 
-    def create_block(self, previous_hash, passcode):
+    def create_block(self, previous_hash, phrase):
         block = {
             'index': len(self.chain) + 1,
             'timestamp': time(),
             'transactions': self.pending_transactions,
             'previous_hash': previous_hash,
-            'passcode': passcode
+            'creator': phrase
         }
         self.pending_transactions = []
         self.chain.append(block)
@@ -28,48 +37,70 @@ class BDTBlockchain:
     def get_last_block(self):
         return self.chain[-1]
 
-    def register_user(self, username):
-        if username in self.users:
-            return None, "এই ইউজারনেমটি ইতিমধ্যে রেজিস্টার্ড আছে!"
-        # নতুন ইউজারের জন্য ইউনিক ১২ শব্দের মতো সিক্রেট পাসফ্রেজ তৈরি
-        passphrase = str(uuid.uuid4()) + "-" + str(uuid.uuid4())
-        self.users[username] = {
-            'passphrase': passphrase,
-            'balances': {'BDT': 1000.0, 'USDT': 50.0, 'ETH': 0.5}  # মাল্টি-টোকেন ফ্রি ব্যালেন্স
+    def create_wallet(self, name):
+        phrase = "bdt-" + str(uuid.uuid4()) + "-" + str(uuid.uuid4())
+        self.wallets[phrase] = {
+            'name': name,
+            'balances': {'BDT': 1000.0, 'SOL': 0.1, 'USDT': 10.0}  # ফ্রি স্টার্টিং ব্যালেন্স
         }
-        return passphrase, "সফলভাবে অ্যাকাউন্ট খোলা হয়েছে!"
+        if phrase not in self.total_holders:
+            self.total_holders.append(phrase)
+        return phrase
 
-    def add_transaction(self, sender, receiver, amount, token):
+    def import_wallet(self, phrase):
+        if phrase in self.wallets:
+            return True, self.wallets[phrase]['name']
+        return False, "ভুল রিকভারি ফ্রেজ!"
+
+    def distribute_fee(self, fee_amount):
+        if len(self.total_holders) == 0:
+            return
+        share = fee_amount / len(self.total_holders)
+        for h_phrase in self.total_holders:
+            self.wallets[h_phrase]['balances']['BDT'] += share
+
+    def add_transaction(self, sender_phrase, receiver_phrase, amount, token):
+        sender_bal = self.wallets[sender_phrase]['balances'].get(token, 0)
+        
+        # ট্রানজেকশন ফি (১% কাটা হবে এবং হোল্ডারদের মধ্যে ডিস্ট্রিবিউট হবে)
+        fee = amount * 0.01 if token == 'BDT' else 0
+        total_deduct = amount + fee
+
+        if sender_bal < total_deduct:
+            return False, "অপর্যাপ্ত ব্যালেন্স ও ফি!"
+
+        # ব্যালেন্স কাটাকাটি
+        self.wallets[sender_phrase]['balances'][token] -= total_deduct
+        
+        if receiver_phrase not in self.wallets:
+            # যদি প্রাপক নতুন হয়, তার জন্য স্বয়ংক্রয় ওয়ালেট তৈরি
+            rec_name = "Wallet_" + receiver_phrase[:6]
+            self.wallets[receiver_phrase] = {'name': rec_name, 'balances': {token: 0}}
+            if receiver_phrase not in self.total_holders:
+                self.total_holders.append(receiver_phrase)
+        
+        if token not in self.wallets[receiver_phrase]['balances']:
+            self.wallets[receiver_phrase]['balances'][token] = 0
+            
+        self.wallets[receiver_phrase]['balances'][token] += amount
+
+        # ফি ডিস্ট্রিবিউশন
+        if fee > 0:
+            self.distribute_fee(fee)
+
         self.pending_transactions.append({
-            'sender': sender,
-            'receiver': receiver,
+            'sender': sender_phrase[:8] + '...',
+            'receiver': receiver_phrase[:8] + '...',
             'amount': amount,
-            'token': token
+            'token': token,
+            'fee': fee
         })
-        return self.get_last_block()['index'] + 1
-
-    def hash(self, block):
-        encoded_block = json.dumps(block, sort_keys=True).encode()
-        return hashlib.sha256(encoded_block).hexdigest()
-
-    def get_balances(self, username):
-        if username not in self.users:
-            return None
         
-        # ডিফল্ট ব্যালেন্স কপি
-        balances = self.users[username]['balances'].copy()
+        prev_block = self.get_last_block()
+        prev_hash = hashlib.sha256(json.dumps(prev_block, sort_keys=True).encode()).hexdigest()
+        self.create_block(prev_hash, sender_phrase)
         
-        # ব্লকচেইন থেকে ট্রানজেকশন হিসেব করে ব্যালেন্স আপডেট করা
-        for block in self.chain:
-            for tx in block['transactions']:
-                t = tx['token']
-                if tx['sender'] == username:
-                    if t not in balances: balances[t] = 0
-                    balances[t] -= tx['amount']
-                if tx['receiver'] == username:
-                    if t not in balances: balances[t] = 0
-                    balances[t] += tx['amount']
-        return balances
+        return True, f"সফল! ফি কাটা হয়েছে {fee} BDT যা অন্যান্য হোল্ডারদের মাঝে ডিস্ট্রিবিউট করা হয়েছে।"
 
 app = Flask(__name__)
 blockchain = BDTBlockchain()
@@ -80,130 +111,142 @@ HTML_PAGE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BDT Multi-Token Blockchain Wallet</title>
+    <title>BDT Web3 Multi-Token Wallet</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f4f7f6; margin: 0; padding: 20px; }
-        .container { max-width: 450px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0px 4px 10px rgba(0,0,0,0.1); margin: auto; }
-        h2 { text-align: center; color: #333; }
-        .box { margin-bottom: 15px; background: #fafafa; padding: 12px; border-radius: 8px; border: 1px solid #ddd; }
-        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 14px; }
-        input, select, button { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
-        button { background: #28a745; color: white; border: none; font-size: 16px; cursor: pointer; font-weight: bold; }
-        button:hover { background: #218838; }
-        .btn-blue { background: #007BFF; }
-        .btn-blue:hover { background: #0056b3; }
-        #result { margin-top: 15px; padding: 10px; background: #e9ecef; border-radius: 5px; word-break: break-all; font-size: 14px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #121212; color: #e0e0e0; margin: 0; padding: 15px; }
+        .container { max-width: 420px; background: #1e1e1e; padding: 20px; border-radius: 16px; box-shadow: 0px 8px 24px rgba(0,0,0,0.5); margin: auto; border: 1px solid #333; }
+        h2 { text-align: center; color: #fbc02d; margin-bottom: 5px; }
+        .subtitle { text-align: center; font-size: 12px; color: #888; margin-bottom: 20px; }
+        .card { background: #2a2a2a; padding: 15px; border-radius: 12px; margin-bottom: 15px; border: 1px solid #444; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; font-size: 13px; color: #bbb; }
+        input, select, button { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #555; border-radius: 8px; box-sizing: border-box; background: #333; color: #fff; font-size: 14px; }
+        button { background: #fbc02d; color: #121212; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #f57f17; }
+        .btn-blue { background: #29b6f6; color: #121212; }
+        .btn-blue:hover { background: #0288d1; }
+        #result { margin-top: 15px; padding: 12px; background: #252525; border-radius: 8px; word-break: break-all; font-size: 13px; border-left: 4px solid #fbc02d; }
+        ul { padding-left: 15px; margin: 5px 0; }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>BDT Multi-Token Wallet</h2>
+    <h2>BDT Web3 Wallet</h2>
+    <div class="subtitle">Base Currency: BDT (1 Trillion Supply) + Solana Support</div>
 
-    <!-- নতুন অ্যাকাউন্ট খোলার সেকশন -->
-    <div class="box">
-        <h3>নতুন অ্যাকাউন্ট তৈরি করুন</h3>
-        <label>আপনার নাম / ইউজারনেম:</label>
-        <input type="text" id="reg_username" placeholder="আপনার নাম দিন">
-        <button class="btn-blue" onclick="registerUser()" style="margin-top:10px;">একাউন্ট খুলুন ও পাসফ্রেজ নিন</button>
+    <!-- নতুন ওয়ালেট তৈরি -->
+    <div class="card">
+        <h3>➕ Create new wallet</h3>
+        <label>ওয়ালেটের নাম:</label>
+        <input type="text" id="wallet_name" placeholder="যেমন: My Main Wallet">
+        <button class="btn-blue" onclick="createWallet()" style="margin-top:10px;">নতুন ওয়ালেট তৈরি করুন</button>
     </div>
 
-    <!-- ব্যালেন্স চেক সেকশন -->
-    <div class="box">
-        <h3>মাল্টি-টোকেন ব্যালেন্স চেক</h3>
-        <label>ইউজারনেম:</label>
-        <input type="text" id="username" placeholder="ইউজারনেম লিখুন">
-        <button onclick="checkBalance()" style="margin-top:10px;">ব্যালেন্স দেখুন</button>
+    <!-- ফেজ কোড দিয়ে লগইন / ইমপোর্ট -->
+    <div class="card">
+        <h3>📥 Import existing wallet</h3>
+        <label>রিকভারি ফেজ কোড (Recovery Phrase):</label>
+        <input type="text" id="import_phrase" placeholder="আপনার ফেজ কোড এখানে পেস্ট করুন">
+        <button onclick="importWallet()" style="margin-top:10px;">ওয়ালেটে প্রবেশ করুন</button>
     </div>
 
-    <!-- টোকেন ট্রান্সফার সেকশন -->
-    <div class="box">
-        <h3>টোকেন পাঠান</h3>
-        <label>প্রেরক (Sender):</label>
-        <input type="text" id="sender" placeholder="আপনার ইউজারনেম">
+    <!-- ব্যালেন্স ও ট্রান্সফার সেকশন -->
+    <div class="card" id="dashboard" style="display:none;">
+        <h3 id="wel_name" style="color: #29b6f6; margin-top:0;"></h3>
+        <div id="balance_box"></div>
         
-        <label>প্রাপক (Receiver):</label>
-        <input type="text" id="receiver" placeholder="প্রাপকের ইউজারনেম">
+        <hr style="border-color: #444; margin: 15px 0;">
         
-        <label>টোকেনের ধরণ (Token):</label>
+        <h3>🚀 Send Crypto / BDT</h3>
+        <label>আমার ফেজ কোড (Sender Phrase):</label>
+        <input type="text" id="sender_phrase" placeholder="আপনার ফেজ কোড দিন">
+
+        <label>প্রাপকের ফেজ কোড বা আইডি:</label>
+        <input type="text" id="receiver_phrase" placeholder="প্রাপকের ফেজ কোড দিন">
+        
+        <label>কারেন্সি / টোকেন:</label>
         <select id="token">
-            <option value="BDT">BDT (Bangladeshi Taka Token)</option>
+            <option value="BDT">BDT (Base Currency - 1 Trillion)</option>
+            <option value="SOL">Solana (SOL)</option>
             <option value="USDT">USDT (Tether)</option>
-            <option value="ETH">ETH (Ethereum)</option>
         </select>
 
         <label>পরিমাণ:</label>
         <input type="number" id="amount" placeholder="পরিমাণ লিখুন">
         
-        <label>পাসফ্রেজ / পাসকোড:</label>
-        <input type="password" id="passcode" placeholder="আপনার সিক্রেট পাসফ্রেজ দিন">
-        
-        <button onclick="sendMoney()" style="margin-top:10px;">টোকেন ট্রান্সফার করুন</button>
+        <button onclick="sendToken()" style="margin-top:10px;">সেন্ড করুন (১% ফি ডিস্ট্রিবিউশনসহ)</button>
     </div>
 
-    <div id="result">আউটপুট এখানে দেখাবে...</div>
+    <div id="result">আপনার ওয়ালেট অ্যাক্টিভিটি এখানে দেখাবে...</div>
 </div>
 
 <script>
-    async function registerUser() {
-        const username = document.getElementById('reg_username').value;
-        if(!username) {
-            alert("দয়া করে নাম লিখুন!");
-            return;
-        }
-        try {
-            let response = await fetch('/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username })
-            });
-            let data = await response.json();
-            if(response.ok) {
-                document.getElementById('result').innerHTML = `<b>সফল!</b> একাউন্ট তৈরি হয়েছে।<br><b>আপনার সিক্রেট পাসফ্রেজ (সংরক্ষণ করুন):</b> <span style="color:red; user-select:all;">${data.passphrase}</span>`;
-            } else {
-                document.getElementById('result').innerHTML = `ত্রুটি: ${data.error}`;
-            }
-        } catch (e) {
-            document.getElementById('result').innerHTML = "সার্ভার কানেক্ট করা যায়নি!";
+    async function createWallet() {
+        const name = document.getElementById('wallet_name').value;
+        if(!name) { alert("ওয়ালেটের নাম দিন!"); return; }
+        let res = await fetch('/create_wallet', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({name})
+        });
+        let data = await res.json();
+        if(res.ok) {
+            document.getElementById('result').innerHTML = `<b>সফল! নতুন ওয়ালেট তৈরি হয়েছে।</b><br>আপনার সিক্রেট ফেজ কোড (সংরক্ষণ করুন): <br><span style="color:#fbc02d; user-select:all; font-weight:bold;">${data.phrase}</span>`;
+            document.getElementById('import_phrase').value = data.phrase;
+            document.getElementById('sender_phrase').value = data.phrase;
+        } else {
+            document.getElementById('result').innerHTML = data.error;
         }
     }
 
-    async function checkBalance() {
-        const user = document.getElementById('username').value;
-        try {
-            let response = await fetch(`/balance/${user}`);
-            let data = await response.json();
-            if (response.ok) {
-                let balancesHTML = "";
-                for (let [token, bal] of Object.entries(data.balances)) {
-                    balancesHTML += `<li>${token}: <b>${bal}</b></li>`;
-                }
-                document.getElementById('result').innerHTML = `<b>${data.username}</b>-এর মাল্টি-টোকেন ব্যালেন্স:<ul>${balancesHTML}</ul>`;
-            } else {
-                document.getElementById('result').innerHTML = `ত্রুটি: ${data.error}`;
+    async function importWallet() {
+        const phrase = document.getElementById('import_phrase').value;
+        if(!phrase) { alert("ফেজ কোড দিন!"); return; }
+        let res = await fetch('/import_wallet', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({phrase})
+        });
+        let data = await res.json();
+        if(res.ok) {
+            document.getElementById('dashboard').style.display = 'block';
+            document.getElementById('wel_name').innerText = `Welcome: ${data.name}`;
+            document.getElementById('sender_phrase').value = phrase;
+            
+            let balHtml = "<b>মাল্টি-কারেন্সি ব্যালেন্স:</b><ul>";
+            for(let [k, v] of Object.entries(data.balances)) {
+                balHtml += `<li><b>${k}</b>: ${v.toLocaleString()}</li>`;
             }
-        } catch (error) {
-            document.getElementById('result').innerHTML = "সার্ভারের সাথে কানেক্ট করা যায়নি!";
+            balHtml += "</ul>";
+            document.getElementById('balance_box').innerHTML = balHtml;
+            document.getElementById('result').innerHTML = "ওয়ালেট সফলভাবে লোড হয়েছে!";
+        } else {
+            document.getElementById('result').innerHTML = data.error;
         }
     }
 
-    async function sendMoney() {
-        const sender = document.getElementById('sender').value;
-        const receiver = document.getElementById('receiver').value;
+    async function sendToken() {
+        const sender_phrase = document.getElementById('sender_phrase').value;
+        const receiver_phrase = document.getElementById('receiver_phrase').value;
         const token = document.getElementById('token').value;
         const amount = parseFloat(document.getElementById('amount').value);
-        const passcode = document.getElementById('passcode').value;
 
-        try {
-            let response = await fetch('/transfer', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sender, receiver, amount, token, passcode })
-            });
-            let data = await response.json();
-            document.getElementById('result').innerHTML = data.message || data.error;
-        } catch (error) {
-            document.getElementById('result').innerHTML = "ট্রানজেকশন সম্পন্ন করা যায়নি!";
+        if(!sender_phrase || !receiver_phrase || isNaN(amount)) {
+            alert("সব তথ্য সঠিকভাবে পূরণ করুন!");
+            return;
+        }
+
+        let res = await fetch('/transfer', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({sender_phrase, receiver_phrase, amount, token})
+        });
+        let data = await res.json();
+        if(res.ok) {
+            document.getElementById('result').innerHTML = `✅ ${data.message}`;
+            importWallet(); // ব্যালেন্স রিফ্রেশ
+        } else {
+            document.getElementById('result').innerHTML = `❌ ${data.error}`;
         }
     }
 </script>
@@ -216,57 +259,43 @@ HTML_PAGE = """
 def home():
     return render_template_string(HTML_PAGE)
 
-@app.route('/register', methods=['POST'])
-def register():
+@app.route('/create_wallet', methods=['POST'])
+def api_create_wallet():
     data = request.get_json()
-    username = data.get('username')
-    if not username:
-        return jsonify({'error': 'ইউজারনেম দিন!'}), 400
-    
-    passphrase, msg = blockchain.register_user(username)
-    if not passphrase:
-        return jsonify({'error': msg}), 400
-    
-    return jsonify({'message': msg, 'passphrase': passphrase}), 201
+    name = data.get('name', 'My Wallet')
+    phrase = blockchain.create_wallet(name)
+    return jsonify({'phrase': phrase}), 201
 
-@app.route('/balance/<username>', methods=['GET'])
-def balance(username):
-    balances = blockchain.get_balances(username)
-    if balances is None:
-        return jsonify({'error': 'ইউজার পাওয়া যায়নি!'}), 404
-    return jsonify({'username': username, 'balances': balances}), 200
+@app.route('/import_wallet', methods=['POST'])
+def api_import_wallet():
+    data = request.get_json()
+    phrase = data.get('phrase', '')
+    success, info = blockchain.import_wallet(phrase)
+    if not success:
+        return jsonify({'error': info}), 404
+    
+    balances = blockchain.wallets[phrase]['balances']
+    return jsonify({'name': info, 'balances': balances}), 200
 
 @app.route('/transfer', methods=['POST'])
-def transfer():
+def api_transfer():
     data = request.get_json()
-    if not data:
-        return jsonify({'error': 'ডাটা পাওয়া যায়নি!'}), 400
-
-    sender = data.get('sender')
-    receiver = data.get('receiver')
+    sender_phrase = data.get('sender_phrase')
+    receiver_phrase = data.get('receiver_phrase')
     amount = data.get('amount')
     token = data.get('token', 'BDT')
-    passcode = data.get('passcode')
 
-    if not sender or not receiver or amount is None or not passcode:
-        return jsonify({'error': 'সব তথ্য সঠিকভাবে দিন!'}), 400
+    if not sender_phrase or not receiver_phrase or amount is None:
+        return jsonify({'error': 'সব ফিল্ড পূরণ করুন!'}), 400
 
-    if sender not in blockchain.users:
-        return jsonify({'error': 'প্রেরক অ্যাকাউন্ট বিদ্যমান নেই!'}), 404
+    if sender_phrase not in blockchain.wallets:
+        return jsonify({'error': 'প্রেরকের ওয়ালেট পাওয়া যায়নি!'}), 404
 
-    if blockchain.users[sender]['passphrase'] != passcode:
-        return jsonify({'error': 'ভুল পাসফ্রেজ (Passphrase)! সঠিক পাসফ্রেজ দিন।'}), 401
+    success, msg = blockchain.add_transaction(sender_phrase, receiver_phrase, amount, token)
+    if not success:
+        return jsonify({'error': msg}), 400
 
-    current_balances = blockchain.get_balances(sender)
-    if current_balances.get(token, 0) < amount:
-        return jsonify({'error': f'অপর্যাপ্ত {token} ব্যালেন্স!'}), 400
-
-    blockchain.add_transaction(sender, receiver, amount, token)
-    previous_block = blockchain.get_last_block()
-    previous_hash = blockchain.hash(previous_block)
-    blockchain.create_block(previous_hash, passcode)
-
-    return jsonify({'message': f'{amount} {token} সফলভাবে ট্রান্সফার হয়েছে!'}), 201
+    return jsonify({'message': msg}), 201
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
