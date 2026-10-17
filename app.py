@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request, render_template_string
 import hashlib
 import json
 from time import time
+import os
 
 class BDTBlockchain:
     def __init__(self):
@@ -176,8 +177,6 @@ def transfer():
     blockchain.create_block(previous_hash, passcode)
 
     return jsonify({'message': 'ট্রানজেকশন সফল হয়েছে!'}), 201
-
-import os
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
